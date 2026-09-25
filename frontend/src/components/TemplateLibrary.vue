@@ -13,6 +13,7 @@
         <div class="text-xs text-slate-500 mt-1">{{ t.description }}</div>
         <div class="text-xs font-mono text-cyan-500 mt-1 truncate">{{ t.pattern }}</div>
       </div>
+      <div v-if="filtered.length === 0" class="text-xs text-slate-500 p-2 text-center">无匹配模板（0 条）</div>
     </div>
   </div>
 </template>

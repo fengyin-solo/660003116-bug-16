@@ -209,10 +209,22 @@ function matchTransition(state: StateNode, symbol: string): number[] {
 }
 
 function runMatch(states: StateNode[], startState: number, input: string): MatchResult {
-  const steps: MatchStep[] = []
-  let backtracks = 0
-  let stepIndex = 0
   const startTime = performance.now()
+  const steps: MatchStep[] = []
+
+  // 统一口径：总步数 = 步骤列表长度；回溯次数 = 列表中回溯步骤数。
+  // 二者均由 steps 派生，保证统计卡与步骤列表永远一致。
+  function finish(matched: boolean, matchStart: number, matchEnd: number): MatchResult {
+    return {
+      matched,
+      matchText: matched ? input.substring(matchStart, matchEnd) : '',
+      groups: matched ? [input.substring(matchStart, matchEnd)] : [],
+      steps,
+      backtracks: steps.reduce((n, s) => n + (s.isBacktrack ? 1 : 0), 0),
+      totalSteps: steps.length,
+      duration: Math.round((performance.now() - startTime) * 100) / 100
+    }
+  }
 
   // Try to match from each position
   for (let startPos = 0; startPos <= input.length; startPos++) {
@@ -234,7 +246,7 @@ function runMatch(states: StateNode[], startState: number, input: string): Match
               seen.add(c)
               nextStates.push(c)
               steps.push({
-                stepIndex: stepIndex++,
+                stepIndex: steps.length,
                 charIndex: i,
                 char,
                 currentState: s,
@@ -250,12 +262,11 @@ function runMatch(states: StateNode[], startState: number, input: string): Match
 
       if (nextStates.length === 0) {
         if (currentStates.some(s => states[s].isAccept)) { matched = true; matchEnd = i; break }
-        backtracks++
         steps.push({
-          stepIndex: stepIndex++,
+          stepIndex: steps.length,
           charIndex: i,
           char,
-          currentState: currentStates[0] || -1,
+          currentState: currentStates[0] ?? -1,
           nextState: -1,
           transition: 'FAIL',
           isBacktrack: true,
@@ -268,22 +279,11 @@ function runMatch(states: StateNode[], startState: number, input: string): Match
     }
 
     if (matched || (startPos === input.length && currentStates.some(s => states[s].isAccept))) {
-      const matchText = input.substring(startPos, matchEnd)
-      const duration = performance.now() - startTime
-      return {
-        matched: true,
-        matchText,
-        groups: [matchText],
-        steps,
-        backtracks,
-        totalSteps: stepIndex,
-        duration: Math.round(duration * 100) / 100
-      }
+      return finish(true, startPos, matchEnd)
     }
   }
 
-  const duration = performance.now() - startTime
-  return { matched: false, matchText: '', groups: [], steps, backtracks, totalSteps: stepIndex, duration: Math.round(duration * 100) / 100 }
+  return finish(false, 0, 0)
 }
 
 export function computeNFA(nfaResult: ReturnType<typeof buildNFA>): NFA {
@@ -391,21 +391,51 @@ export function parseAST(pattern: string): ASTNode {
   return parseOr()
 }
 
+// 空结果/解析失败的零状态：数字一律为 0、步骤列表为空，旧数据不残留。
+const EMPTY_RESULT: MatchResult = {
+  matched: false,
+  matchText: '',
+  groups: [],
+  steps: [],
+  backtracks: 0,
+  totalSteps: 0,
+  duration: 0
+}
+
+// 播放速度档位（倍数 -> 单步间隔 ms），为唯一口径，UI 与定时器共用
+export const PLAYBACK_SPEEDS = [
+  { label: '0.5x', value: 0.5, delay: 400 },
+  { label: '1x', value: 1, delay: 200 },
+  { label: '2x', value: 2, delay: 100 },
+  { label: '4x', value: 4, delay: 50 }
+]
+const DEFAULT_SPEED = 1
+
 export const useRegexStore = defineStore('regex', () => {
   const pattern = ref('^([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)\\.([a-zA-Z]{2,})$')
   const testString = ref('user@example.com admin@mail.org invalid-email')
   const currentStep = ref(0)
   const isPlaying = ref(false)
+  const playSpeed = ref(DEFAULT_SPEED)
   const nfa = ref<NFA | null>(null)
-  const matchResult = ref<MatchResult | null>(null)
+  const matchResult = ref<MatchResult>({ ...EMPTY_RESULT, steps: [] })
   const ast = ref<ASTNode | null>(null)
   const error = ref('')
   const selectedTemplate = ref<string>('')
 
+  // 全程只允许存在一个播放定时器，避免暂停后统计继续增长
+  let playTimer: ReturnType<typeof setInterval> | null = null
+
   const groupColors = GROUP_COLORS
 
+  const totalSteps = computed(() => matchResult.value.steps.length)
+  const hasSteps = computed(() => totalSteps.value > 0)
+  const canStepForward = computed(() => hasSteps.value && currentStep.value < totalSteps.value - 1)
+  const canStepBackward = computed(() => currentStep.value > 0)
+  const activeStep = computed(() => matchResult.value.steps[currentStep.value] ?? null)
+
   const matchHighlight = computed(() => {
-    if (!matchResult.value || !matchResult.value.matched) return null
+    if (!matchResult.value.matched) return null
     const matchText = matchResult.value.matchText
     const idx = testString.value.indexOf(matchText)
     if (idx === -1) return null
@@ -416,20 +446,48 @@ export const useRegexStore = defineStore('regex', () => {
     }
   })
 
+  function clearPlayTimer() {
+    if (playTimer !== null) {
+      clearInterval(playTimer)
+      playTimer = null
+    }
+  }
+
+  // 每次执行：先停止播放并重置全部统计，再从零累计
   function execute() {
+    clearPlayTimer()
+    isPlaying.value = false
+    currentStep.value = 0
     error.value = ''
+    nfa.value = null
+    ast.value = null
+    matchResult.value = { ...EMPTY_RESULT, steps: [] }
+
+    let built: ReturnType<typeof buildNFA>
     try {
-      const built = buildNFA(pattern.value)
+      built = buildNFA(pattern.value)
+    } catch (e: any) {
+      error.value = e?.message || '正则表达式解析错误'
+      return
+    }
+    try {
       nfa.value = computeNFA(built)
       matchResult.value = runMatch(built.states, built.startState, testString.value)
       ast.value = parseAST(pattern.value)
-      currentStep.value = 0
-    } catch (e: any) {
-      error.value = e.message || '正则表达式解析错误'
+    } catch {
+      // 计算/解析失败同样落零状态，不保留上一轮数字
       nfa.value = null
-      matchResult.value = null
       ast.value = null
+      matchResult.value = { ...EMPTY_RESULT, steps: [] }
+      error.value = error.value || '正则表达式解析错误'
     }
+  }
+
+  // 统一入口：两个输入都落库后只执行一次，保证结果面板与编辑器入口一致
+  function setInputs(p: string, s: string) {
+    pattern.value = p
+    testString.value = s
+    execute()
   }
 
   function setPattern(p: string) {
@@ -443,46 +501,59 @@ export const useRegexStore = defineStore('regex', () => {
   }
 
   function applyTemplate(t: RegexTemplate) {
-    pattern.value = t.pattern
-    testString.value = t.testString
     selectedTemplate.value = t.name
-    execute()
+    setInputs(t.pattern, t.testString)
   }
 
   function stepForward() {
-    if (matchResult.value && currentStep.value < matchResult.value.steps.length - 1) {
-      currentStep.value++
-    }
+    if (canStepForward.value) currentStep.value++
   }
 
   function stepBackward() {
-    if (currentStep.value > 0) currentStep.value--
+    if (canStepBackward.value) currentStep.value--
   }
 
   function resetStep() {
+    clearPlayTimer()
+    isPlaying.value = false
     currentStep.value = 0
   }
 
-  function play() {
-    isPlaying.value = true
-    const interval = setInterval(() => {
-      if (matchResult.value && currentStep.value < matchResult.value.steps.length - 1) {
+  // 仅在真实推进时 currentStep +1；到末位立即停止，数字不再变化
+  function startTimer() {
+    clearPlayTimer()
+    const speed = PLAYBACK_SPEEDS.find(s => s.value === playSpeed.value) ?? PLAYBACK_SPEEDS[1]
+    playTimer = setInterval(() => {
+      if (currentStep.value < totalSteps.value - 1) {
         currentStep.value++
       } else {
-        isPlaying.value = false
-        clearInterval(interval)
+        pause()
       }
-    }, 200)
+    }, speed.delay)
   }
 
-  function stop() {
+  function play() {
+    if (isPlaying.value || !hasSteps.value) return
+    isPlaying.value = true
+    startTimer()
+  }
+
+  function pause() {
     isPlaying.value = false
+    clearPlayTimer()
+  }
+
+  // 调整速度不重置进度；播放中即时按新速度推进，暂停中仅记录档位
+  function setSpeed(value: number) {
+    playSpeed.value = value
+    if (isPlaying.value) startTimer()
   }
 
   return {
-    pattern, testString, currentStep, isPlaying, nfa, matchResult, ast, error,
+    pattern, testString, currentStep, isPlaying, playSpeed, nfa, matchResult, ast, error,
     selectedTemplate, groupColors, matchHighlight,
-    execute, setPattern, setTestString, applyTemplate,
-    stepForward, stepBackward, resetStep, play, stop
+    totalSteps, hasSteps, canStepForward, canStepBackward, activeStep,
+    execute, setInputs, setPattern, setTestString, applyTemplate,
+    stepForward, stepBackward, resetStep, play, pause, setSpeed
   }
 })

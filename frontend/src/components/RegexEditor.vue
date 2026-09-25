@@ -26,25 +26,31 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRegexStore } from '../store/regex'
 
 const store = useRegexStore()
 const localPattern = ref(store.pattern)
 const localTestString = ref(store.testString)
 
-let debounceTimer: ReturnType<typeof setTimeout>
+// 模板库等其他入口修改后同步输入框，保持两个入口展示一致
+watch(() => store.pattern, v => { if (v !== localPattern.value) localPattern.value = v })
+watch(() => store.testString, v => { if (v !== localTestString.value) localTestString.value = v })
+
+let patternTimer: ReturnType<typeof setTimeout>
+let testTimer: ReturnType<typeof setTimeout>
 function onInput() {
-  clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => { store.setPattern(localPattern.value) }, 300)
+  clearTimeout(patternTimer)
+  patternTimer = setTimeout(() => { store.setPattern(localPattern.value) }, 300)
 }
 function onTestInput() {
-  clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => { store.setTestString(localTestString.value) }, 300)
+  clearTimeout(testTimer)
+  testTimer = setTimeout(() => { store.setTestString(localTestString.value) }, 300)
 }
+// 显式入口：两个输入一次性落库，只执行一次，与模板入口口径一致
 function execute() {
-  store.setPattern(localPattern.value)
-  store.setTestString(localTestString.value)
-  store.execute()
+  clearTimeout(patternTimer)
+  clearTimeout(testTimer)
+  store.setInputs(localPattern.value, localTestString.value)
 }
 </script>

@@ -2,7 +2,7 @@
   <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
     <div class="flex items-center justify-between mb-3">
       <h3 class="text-sm font-bold text-slate-400">NFA 状态机可视化</h3>
-      <span v-if="store.nfa" class="text-xs text-slate-500">{{ store.nfa.states.length }} 状态 · {{ store.nfa.transitions.length }} 转移</span>
+      <span class="text-xs text-slate-500">{{ store.nfa?.states.length ?? 0 }} 状态 · {{ store.nfa?.transitions.length ?? 0 }} 转移</span>
     </div>
     <canvas ref="canvasRef" width="800" height="500" class="w-full bg-slate-900 rounded-lg border border-slate-700"></canvas>
     <div class="mt-2 flex gap-4 text-xs text-slate-500">
@@ -23,11 +23,12 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 
 function draw() {
   const canvas = canvasRef.value
-  if (!canvas || !store.nfa) return
+  if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
+  if (!store.nfa) return
 
   const activeStates = new Set<number>()
   if (store.matchResult && store.currentStep < store.matchResult.steps.length) {

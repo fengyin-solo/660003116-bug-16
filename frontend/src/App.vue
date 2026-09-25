@@ -19,26 +19,41 @@
       <div class="lg:w-1/4 space-y-4">
         <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
           <h3 class="text-sm font-bold text-slate-400 mb-3">匹配统计</h3>
-          <div v-if="store.matchResult" class="space-y-2 text-sm">
-            <div class="flex justify-between"><span class="text-slate-500">匹配状态</span><span :class="store.matchResult.matched ? 'text-green-400' : 'text-red-400'">{{ store.matchResult.matched ? '✓ 匹配成功' : '✗ 未匹配' }}</span></div>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between">
+              <span class="text-slate-500">匹配状态</span>
+              <span v-if="store.error" class="text-red-400">✗ 解析失败</span>
+              <span v-else-if="store.matchResult.matched" class="text-green-400">✓ 匹配成功</span>
+              <span v-else class="text-red-400">✗ 未匹配</span>
+            </div>
             <div class="flex justify-between"><span class="text-slate-500">匹配文本</span><span class="text-cyan-400 font-mono truncate ml-2">{{ store.matchResult.matchText || '—' }}</span></div>
             <div class="flex justify-between"><span class="text-slate-500">总步数</span><span class="text-slate-300">{{ store.matchResult.totalSteps }}</span></div>
             <div class="flex justify-between"><span class="text-slate-500">回溯次数</span><span :class="store.matchResult.backtracks > 0 ? 'text-orange-400 font-bold' : 'text-slate-300'">{{ store.matchResult.backtracks }}</span></div>
             <div class="flex justify-between"><span class="text-slate-500">耗时(ms)</span><span class="text-slate-300">{{ store.matchResult.duration }}</span></div>
           </div>
-          <div v-else class="text-slate-500 text-sm">点击"执行匹配"开始</div>
         </div>
 
         <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
           <h3 class="text-sm font-bold text-slate-400 mb-3">逐步控制</h3>
           <div class="flex flex-wrap items-center gap-2 mb-3">
             <button @click="store.stepBackward" :disabled="store.currentStep === 0" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 rounded text-sm">⏮ 上一步</button>
-            <button v-if="!store.isPlaying" @click="store.play" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-sm">▶ 播放</button>
-            <button v-else @click="store.stop" class="px-3 py-1 bg-red-600 hover:bg-red-500 rounded text-sm">⏸ 停止</button>
-            <button @click="store.stepForward" :disabled="!store.matchResult || store.currentStep >= store.matchResult.steps.length - 1" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 rounded text-sm">下一步 ⏭</button>
+            <button v-if="!store.isPlaying" @click="store.play" :disabled="store.matchResult.steps.length === 0" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-30 rounded text-sm">▶ 播放</button>
+            <button v-else @click="store.stop" class="px-3 py-1 bg-red-600 hover:bg-red-500 rounded text-sm">⏸ 暂停</button>
+            <button @click="store.stepForward" :disabled="store.matchResult.steps.length === 0 || store.currentStep >= store.matchResult.steps.length - 1" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 rounded text-sm">下一步 ⏭</button>
             <button @click="store.resetStep" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm">⟲ 重置</button>
           </div>
-          <div class="text-sm text-slate-400">步骤: {{ store.currentStep }} / {{ store.matchResult?.steps.length || 0 }}</div>
+          <div class="flex items-center justify-between text-sm text-slate-400">
+            <span>步骤: {{ store.currentStep }} / {{ store.matchResult.steps.length }}</span>
+            <label class="flex items-center gap-1 text-xs text-slate-500">
+              速度
+              <select
+                :value="store.playbackSpeed"
+                @change="store.setPlaybackSpeed(Number(($event.target as HTMLSelectElement).value))"
+                class="bg-slate-900 border border-slate-600 rounded px-1 py-0.5 text-slate-300 text-xs focus:outline-none focus:border-cyan-500">
+                <option v-for="s in [0.5, 1, 2, 4]" :key="s" :value="s">{{ s }}x</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
